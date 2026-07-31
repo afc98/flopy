@@ -313,7 +313,7 @@ def __vertex_lake_connections(
     k, icpl = cell_index
     node = k * ncpl + icpl
     neighbors = modelgrid.neighbors(node=node, method="rook")
-    cell_iverts = set(iverts[icpl])
+    cell_edges = __cell_edges(iverts[icpl])
 
     for neighbor in neighbors:
         # Convert global node number to (layer, cell-per-layer)
@@ -324,20 +324,27 @@ def __vertex_lake_connections(
         if not (np.ma.is_masked(lake_map[ci]) and idomain[ci] > 0):
             continue
 
-        shared = tuple(cell_iverts & set(iverts[nicpl]))
+        # the shared face is every edge the two cells have in common. A
+        # boundary split by a vertex present in both cells (a hanging node
+        # carried by the neighboring cell) contributes more than one edge.
+        shared = cell_edges & __cell_edges(iverts[nicpl])
 
-        if shared is None or len(shared) != 2:
+        if not shared:
             continue
-
-        v0, v1 = shared
-        p0 = vertices[v0]
-        p1 = vertices[v1]
-        connwidth = np.linalg.norm(p1 - p0)
 
         cx = xcenters[nicpl]
         cy = ycenters[nicpl]
         centre = (cx, cy)
-        connlen = __distance_to_segment(centre, p0, p1)
+
+        connwidth = 0.0
+        connlen = None
+        for v0, v1 in shared:
+            p0 = vertices[v0]
+            p1 = vertices[v1]
+            connwidth += np.linalg.norm(p1 - p0)
+            distance = __distance_to_segment(centre, p0, p1)
+            if connlen is None or distance < connlen:
+                connlen = distance
 
         cellids.append(ci)
         claktypes.append("horizontal")
@@ -359,6 +366,18 @@ def __vertex_lake_connections(
             connwidths.append(0.0)
 
     return cellids, claktypes, belevs, televs, connlens, connwidths
+
+
+def __cell_edges(poly):
+    """
+    Sorted vertex pairs that define the faces of a cell. Matches the edges
+    Grid._set_neighbors() uses to determine rook connectivity.
+    """
+
+    if poly[0] == poly[-1]:
+        poly = poly[:-1]
+
+    return {tuple(sorted((poly[v - 1], poly[v]))) for v in range(len(poly))}
 
 
 def __distance_to_segment(cell_centre, p0, p1):
