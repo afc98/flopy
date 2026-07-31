@@ -1004,9 +1004,7 @@ def test_disv_lake_run(function_tmpdir):
 
 
 def test_disv_shared_boundary_split_by_vertex():
-    # two cells whose common boundary is split by vertex 2, which both cells
-    # carry. The cells share two edges, not one, and the full boundary is the
-    # lake connection face.
+    # vertex 2 splits the common boundary into two shared edges
     vertices = [
         (0, 0.0, 0.0),
         (1, 1.0, 0.0),
@@ -1053,7 +1051,7 @@ def test_disv_shared_boundary_split_by_vertex():
 
 
 def build_dis_and_equivalent_disv(nlay, nrow, ncol, delr, delc, top, botm):
-    """Build a structured grid and the vertex grid that discretizes it identically."""
+    # a structured grid and the vertex grid that discretizes it identically
     structured = StructuredGrid(
         delr=delr,
         delc=delc,
@@ -1118,8 +1116,7 @@ def build_dis_and_equivalent_disv(nlay, nrow, ncol, delr, delc, top, botm):
     ),
 )
 def test_disv_matches_dis_embedded_lake(lakes, inactive):
-    # embedded lake connections on a vertex grid must reproduce the structured
-    # result when the two grids discretize the same domain
+    # a vertex grid must reproduce the structured result for the same domain
     nlay, nrow, ncol = 2, 5, 5
     delr = np.array([10.0, 20.0, 30.0, 20.0, 10.0])
     delc = np.array([5.0, 15.0, 25.0, 15.0, 5.0])

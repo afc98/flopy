@@ -324,9 +324,8 @@ def __vertex_lake_connections(
         if not (np.ma.is_masked(lake_map[ci]) and idomain[ci] > 0):
             continue
 
-        # the shared face is every edge the two cells have in common. A
-        # boundary split by a vertex present in both cells (a hanging node
-        # carried by the neighboring cell) contributes more than one edge.
+        # the shared face is every edge the two cells have in common; a
+        # boundary split by a hanging node contributes more than one edge
         shared = cell_edges & __cell_edges(iverts[nicpl])
 
         if not shared:
@@ -370,10 +369,10 @@ def __vertex_lake_connections(
 
 def __cell_edges(poly):
     """
-    Sorted vertex pairs that define the faces of a cell. Matches the edges
-    Grid._set_neighbors() uses to determine rook connectivity.
+    Sorted vertex pairs that define the faces of a cell.
     """
 
+    # must match the edges Grid._set_neighbors() uses for rook connectivity
     if poly[0] == poly[-1]:
         poly = poly[:-1]
 
