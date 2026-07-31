@@ -1001,3 +1001,172 @@ def test_disv_lake_run(function_tmpdir):
     success = sim.run_simulation(silent=False)
 
     assert success, f"could not run {sim.name}"
+
+
+def test_disv_shared_boundary_split_by_vertex():
+    # two cells whose common boundary is split by vertex 2, which both cells
+    # carry. The cells share two edges, not one, and the full boundary is the
+    # lake connection face.
+    vertices = [
+        (0, 0.0, 0.0),
+        (1, 1.0, 0.0),
+        (2, 1.0, 1.0),
+        (3, 1.0, 2.0),
+        (4, 0.0, 2.0),
+        (5, 2.0, 0.0),
+        (6, 2.0, 2.0),
+    ]
+    cell2d = [
+        (0, 0.5, 1.0, 5, 0, 1, 2, 3, 4),
+        (1, 1.5, 1.0, 5, 1, 5, 6, 3, 2),
+    ]
+
+    modelgrid = VertexGrid(
+        vertices=vertices,
+        cell2d=cell2d,
+        top=np.ones(2),
+        botm=-np.ones((1, 2)),
+        idomain=np.ones((1, 2), dtype=int),
+        nlay=1,
+    )
+
+    lake_map = np.array([[0, -1]], dtype=int)
+
+    idomain, pakdata, connectiondata = get_lak_connections(
+        modelgrid,
+        lake_map,
+        idomain=np.ones((1, 2), dtype=int),
+        bedleak=1.0,
+    )
+
+    assert pakdata[0] == 1
+
+    conn = connectiondata[0]
+
+    assert conn[2] == (0, 1)
+    assert conn[3] == "horizontal"
+    assert conn[7] == pytest.approx(0.5)
+    assert conn[8] == pytest.approx(2.0)
+
+    # the lake cell must be deactivated once it has a connection
+    assert np.array_equal(idomain, np.array([[0, 1]]))
+
+
+def build_dis_and_equivalent_disv(nlay, nrow, ncol, delr, delc, top, botm):
+    """Build a structured grid and the vertex grid that discretizes it identically."""
+    structured = StructuredGrid(
+        delr=delr,
+        delc=delc,
+        top=top,
+        botm=botm,
+        idomain=np.ones((nlay, nrow, ncol), dtype=int),
+        nlay=nlay,
+    )
+
+    xv = np.concatenate(([0.0], np.cumsum(delr)))
+    yv = delc.sum() - np.concatenate(([0.0], np.cumsum(delc)))
+
+    vertices = []
+    ivert = {}
+    for i in range(nrow + 1):
+        for j in range(ncol + 1):
+            ivert[(i, j)] = len(vertices)
+            vertices.append((len(vertices), float(xv[j]), float(yv[i])))
+
+    cell2d = []
+    for i in range(nrow):
+        for j in range(ncol):
+            cell2d.append(
+                (
+                    i * ncol + j,
+                    0.5 * (xv[j] + xv[j + 1]),
+                    0.5 * (yv[i] + yv[i + 1]),
+                    4,
+                    ivert[(i, j)],
+                    ivert[(i, j + 1)],
+                    ivert[(i + 1, j + 1)],
+                    ivert[(i + 1, j)],
+                )
+            )
+
+    ncpl = nrow * ncol
+    vertex = VertexGrid(
+        vertices=vertices,
+        cell2d=cell2d,
+        top=top.flatten(),
+        botm=botm.reshape(nlay, ncpl),
+        idomain=np.ones((nlay, ncpl), dtype=int),
+        nlay=nlay,
+    )
+
+    return structured, vertex
+
+
+@pytest.mark.parametrize(
+    "lakes, inactive",
+    (
+        ([[(0, 2, 2)]], []),
+        ([[(0, 1, 1), (0, 1, 2), (0, 2, 1), (0, 2, 2)]], []),
+        ([[(0, 0, 0)]], []),
+        ([[(0, 0, 2)]], []),
+        ([[(1, 2, 2)]], []),
+        ([[(0, 2, 2), (1, 2, 2)]], []),
+        ([[(0, 2, 2)]], [(0, 2, 3)]),
+        ([[(0, 2, 1)], [(0, 2, 2)]], []),
+        ([[(0, 1, 1)], [(0, 3, 3)]], []),
+        ([[(0, 2, 2), (0, 2, 3)]], [(0, 2, 2)]),
+    ),
+)
+def test_disv_matches_dis_embedded_lake(lakes, inactive):
+    # embedded lake connections on a vertex grid must reproduce the structured
+    # result when the two grids discretize the same domain
+    nlay, nrow, ncol = 2, 5, 5
+    delr = np.array([10.0, 20.0, 30.0, 20.0, 10.0])
+    delc = np.array([5.0, 15.0, 25.0, 15.0, 5.0])
+    top = np.full((nrow, ncol), 10.0)
+    botm = np.array([np.full((nrow, ncol), 0.0), np.full((nrow, ncol), -10.0)])
+    ncpl = nrow * ncol
+
+    structured, vertex = build_dis_and_equivalent_disv(
+        nlay, nrow, ncol, delr, delc, top, botm
+    )
+
+    lake_map = np.full((nlay, nrow, ncol), -1, dtype=int)
+    for lake_number, cells in enumerate(lakes):
+        for cell in cells:
+            lake_map[cell] = lake_number
+
+    idomain = np.ones((nlay, nrow, ncol), dtype=int)
+    for cell in inactive:
+        idomain[cell] = 0
+
+    dis_idomain, dis_pakdata, dis_conn = get_lak_connections(
+        structured, lake_map.copy(), idomain=idomain.copy(), bedleak=1.0
+    )
+    disv_idomain, disv_pakdata, disv_conn = get_lak_connections(
+        vertex,
+        lake_map.reshape(nlay, ncpl).copy(),
+        idomain=idomain.reshape(nlay, ncpl).copy(),
+        bedleak=1.0,
+    )
+
+    assert dis_pakdata == disv_pakdata
+
+    def flatten(cellid):
+        if len(cellid) == 3:
+            k, i, j = cellid
+            return k, i * ncol + j
+        return tuple(cellid)
+
+    def key(conn):
+        lake_number, _, cellid, claktype, _, _, _, connlen, connwidth = conn
+        return (
+            lake_number,
+            *flatten(cellid),
+            claktype,
+            round(connlen, 6),
+            round(connwidth, 6),
+        )
+
+    assert sorted(key(c) for c in dis_conn) == sorted(key(c) for c in disv_conn)
+    assert np.array_equal(dis_idomain.reshape(nlay, ncpl), disv_idomain)
